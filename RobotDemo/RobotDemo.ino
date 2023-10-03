@@ -6,15 +6,15 @@
 // https://github.com/curiores/ArduinoTutorials/tree/main/encoderControl
 // which is used under MIT license
 
-#define BackFwd 14
-#define BackBwd 15
-#define FrontFwd 16
-#define FrontBwd 17
+#define FrontFwd 14
+#define FrontBwd 15
+#define BackFwd 16
+#define BackBwd 17
 
-#define FrontEncoderA 2
-#define BackEncoderA 3
-#define FrontEncoderB 4
-#define BackEncoderB 5
+#define BackEncoderA 2
+#define FrontEncoderA 3
+#define BackEncoderB 4
+#define FrontEncoderB 5
 
 bool isPort = false;
 
@@ -106,10 +106,13 @@ float eintegralFront = 0;
 float eprevBack = 0;
 float eintegralBack = 0;
 
+int targetFront = 0;
+int targetBack = 0;
+
+int oldOutput[] = {0,0,0,0};
+
 void loop() {
   // set target position
-  int targetFront = 1200;
-  int targetBack = 1200;
   //int target = 250*sin(prevT/1e6);
 
 
@@ -137,19 +140,37 @@ void loop() {
   run_PID(FRONT_MOTOR, posFront, targetFront, currT, deltaT, &eprevFront, &eintegralFront);
   run_PID(BACK_MOTOR, posBack, targetBack, currT, deltaT, &eprevBack, &eintegralBack);
 
-  if (isPort) {
-    Serial.print("P:");
-  } else {
-    Serial.print("S:");
+  while(Serial.available()) {
+    char direction = Serial.read();
+    if (direction=='F' || direction == 'B'){
+      int how_much = Serial.parseInt();
+      if (direction=='F'){targetFront=how_much;}
+      else {targetBack=how_much;}
+    }
   }
-  Serial.print(targetFront);
-  Serial.print(" ");
-  Serial.print(posFront);
-  Serial.print(" ");
-  Serial.print(targetBack);
-  Serial.print(" ");
-  Serial.print(posBack);
-  Serial.println();
+
+  int newOutput[] = {targetFront, posFront, targetBack, posBack};
+  bool doOutput = false;
+  for(byte i=0; i<4; i++){
+    if (newOutput[i] != oldOutput[i]){doOutput = true;}
+    oldOutput[i] = newOutput[i];
+  }
+
+  if(doOutput){
+    if (isPort) {
+      Serial.print("P:");
+    } else {
+      Serial.print("S:");
+    }
+    Serial.print(targetFront);
+    Serial.print(" ");
+    Serial.print(posFront);
+    Serial.print(" ");
+    Serial.print(targetBack);
+    Serial.print(" ");
+    Serial.print(posBack);
+    Serial.println();
+  }
 }
 
 
@@ -159,6 +180,13 @@ const byte motors[2][2] = {
 };
 
 void setMotor(byte motorIndex, int dir, int pwmVal){
+  // If the power to send the motor is too small, we won't.
+  if(pwmVal < 10) {
+    SoftPWMSet(motors[motorIndex][0], 0);
+    SoftPWMSet(motors[motorIndex][1], 0);
+    return;
+  }
+
   // The directions to move the motor are reversed on the starboard side
   // equality on bools == XNOR
   // Logic is flipped if isPort == false

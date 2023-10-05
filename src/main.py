@@ -1,77 +1,81 @@
 from machine import Pin, PWM
-from sys import exit, stdin
-import time, math
-import uselect
+from sys import stdin
+import time, uselect
 
 
 led = Pin(25, Pin.OUT)
 led.value(1)
 
-PWM_CAP = 65535
+PWM_CAP = 32768
 
 
 class Wheel:
-    kp = 1
-    kd = 0.5
-    ki = 0.0001
+    kp = 35
+    kd = 60
+    ki = 0.0005
 
-    def __init__(self, fwd_pin, bwd_pin, enc_a, enc_b, is_port) -> None:
+    def __init__(self, fwd_pin, bwd_pin, enc_a, enc_b, is_starboard, name) -> None:
+        if is_starboard:
+            fwd_pin, bwd_pin = (bwd_pin, fwd_pin)
+            enc_a, enc_b = (enc_b, enc_a)
+
         self.fwd = PWM(Pin(fwd_pin, Pin.OUT))
         self.bwd = PWM(Pin(bwd_pin, Pin.OUT))
-        self.fwd.freq(488)
-        self.bwd.freq(488)
+
+        self.fwd.freq(100)
+        self.bwd.freq(100)
 
         self.enc_a = Pin(enc_a, Pin.IN, Pin.PULL_UP)
         self.enc_b = Pin(enc_b, Pin.IN, Pin.PULL_UP)
 
-        self.is_port = is_port
+        self.name = name
 
-        self.enc_a.irq(trigger=Pin.IRQ_RISING, handler=self.handle_encoder_interrupt)
-        self.enc_b.irq(trigger=Pin.IRQ_RISING, handler=self.handle_encoder_interrupt)
+        self.enc_a.irq(trigger=Pin.IRQ_RISING, handler=self.handle_encoder_a)
+        self.enc_b.irq(trigger=Pin.IRQ_RISING, handler=self.handle_encoder_b)
 
         self.pos = 0
         self.target = 0
         self.prev_error = 0
         self.integral_error = 0
+        self.speed = 0
 
         self.prev_time = time.ticks_us()
         self.curr_time = time.ticks_us()
 
-    def handle_encoder_interrupt(self, pin):
-        inc = 0
-        if pin == self.enc_a:
-            inc = 1 if self.enc_b.value() > 0 else -1
-        else:
-            inc = -1 if self.enc_a.value() > 0 else 1
+    def handle_encoder_a(self, pin):
+        self.pos += 1 if self.enc_b.value() > 0 else -1
 
-        self.pos += inc if self.is_port else -inc
+    def handle_encoder_b(self, pin):
+        self.pos += -1 if self.enc_a.value() > 0 else 1
 
     def run_pid_control(self):
         state = machine.disable_irq()
         try:
             """source https://curiores.com/positioncontrol"""
-
             self.curr_time = time.ticks_us()
             # delta time in seconds
             delta_time = time.ticks_diff(self.curr_time, self.prev_time) / 1.0e6
 
             error = self.pos - self.target
             d_error = (error - self.prev_error) / delta_time
-            self.integral_error += error * delta_time
+
+            if self.speed < 0.9 * PWM_CAP:
+                self.integral_error += error * delta_time
 
             # control signal
             u = self.kp * error + self.kd * d_error + self.ki * self.integral_error
 
-            pwr = min(abs(u), PWM_CAP)
-            dir = 1 if u > 0 else -1
-            self.spin(dir, int(pwr))
+            self.speed = int(min(abs(u), PWM_CAP))
+            dir = -1 if u > 0 else 1
+            self.spin(dir)
             self.prev_error = error
         finally:
             machine.enable_irq(state)
 
-    def spin(self, dir, pwm_val):
-        dir *= -1
-        pwm_val *= 1
+    def spin(self, dir):
+        pwm_val = self.speed
+        if pwm_val < 500:
+            return
         if dir > 0:
             self.fwd.duty_u16(pwm_val)
             self.bwd.duty_u16(0)
@@ -87,12 +91,15 @@ class Wheel:
         self.prev_error = 0
         self.integral_error = 0
 
+    def __str__(self) -> str:
+        return self.name
 
-starboard_front = Wheel(0, 2, 1, 3, False)
-port_front = Wheel(4, 6, 5, 7, True)
 
-starboard_back = Wheel(8, 10, 9, 11, False)
-port_back = Wheel(12, 14, 13, 15, True)
+starboard_front = Wheel(0, 2, 1, 3, True, "sf")
+port_front = Wheel(4, 6, 5, 7, False, "pf")
+
+starboard_back = Wheel(8, 10, 9, 11, True, "sb")
+port_back = Wheel(12, 14, 13, 15, False, "pb")
 
 wheels = {
     "pf": port_front,
@@ -100,9 +107,6 @@ wheels = {
     "sf": starboard_front,
     "sb": starboard_back,
 }
-
-print("Type start() to begin...")
-
 
 cmd = ""
 while True:

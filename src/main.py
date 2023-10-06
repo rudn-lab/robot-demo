@@ -7,6 +7,7 @@ led = Pin(25, Pin.OUT)
 led.value(1)
 
 PWM_CAP = 32768
+PWM_MIN = 500
 
 
 class Wheel:
@@ -74,7 +75,7 @@ class Wheel:
 
     def spin(self, dir):
         pwm_val = self.speed
-        if pwm_val < 500:
+        if pwm_val < PWM_MIN:
             return
         if dir > 0:
             self.fwd.duty_u16(pwm_val)

@@ -140,7 +140,7 @@ while True:
             wheel = wheels[c[:2]]
             try:
                 wheel.target = int(c[2:])
-                print(c[:2], "->", c[2:], sep="")
+                print(wheel.name, ":", wheel.pos "->", wheel.target, sep="")
             except ValueError:
                 print(c[2:], "?", sep="")
         else:

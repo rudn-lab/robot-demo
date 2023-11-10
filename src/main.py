@@ -6,14 +6,14 @@ import time, uselect
 led = Pin(25, Pin.OUT)
 led.value(1)
 
-PWM_CAP = 32768
-PWM_MIN = 500
+PWM_CAP = 2**7
+PWM_MIN = 10
 
 
 class Wheel:
-    kp = 35
-    kd = 60
-    ki = 0.0005
+    kp = 1.5
+    kd = 2
+    ki = 0.0001
 
     def __init__(self, fwd_pin, bwd_pin, enc_a, enc_b, is_starboard, name) -> None:
         if is_starboard:
@@ -39,6 +39,7 @@ class Wheel:
         self.prev_error = 0
         self.integral_error = 0
         self.speed = 0
+        self.dir = 0
 
         self.prev_time = time.ticks_us()
         self.curr_time = time.ticks_us()
@@ -48,6 +49,22 @@ class Wheel:
 
     def handle_encoder_b(self, pin):
         self.pos += -1 if self.enc_a.value() > 0 else 1
+
+    def spin(self):
+        pwm_val = self.speed
+        dir = self.dir
+        if pwm_val < PWM_MIN:
+            self.fwd.duty_u16(0)
+            self.bwd.duty_u16(0)
+        elif dir > 0:
+            self.fwd.duty_u16(pwm_val*256)
+            self.bwd.duty_u16(0)
+        elif dir < 0:
+            self.fwd.duty_u16(0)
+            self.bwd.duty_u16(pwm_val*256)
+        else:
+            self.fwd.duty_u16(0)
+            self.bwd.duty_u16(0)
 
     def run_pid_control(self):
         state = machine.disable_irq()
@@ -60,37 +77,45 @@ class Wheel:
             error = self.pos - self.target
             d_error = (error - self.prev_error) / delta_time
 
-            if self.speed < 0.9 * PWM_CAP:
-                self.integral_error += error * delta_time
+            #if self.speed < 0.9 * PWM_CAP:
+            self.integral_error += error * delta_time
 
             # control signal
             u = self.kp * error + self.kd * d_error + self.ki * self.integral_error
 
             self.speed = int(min(abs(u), PWM_CAP))
-            dir = -1 if u > 0 else 1
-            self.spin(dir)
+            self.dir = -1 if u > 0 else 1
+            self.spin()
             self.prev_error = error
         finally:
             machine.enable_irq(state)
 
-    def spin(self, dir):
+    def spin(self):
         pwm_val = self.speed
+        dir = self.dir
         if pwm_val < PWM_MIN:
-            return
-        if dir > 0:
-            self.fwd.duty_u16(pwm_val)
+            self.fwd.duty_u16(0)
+            self.bwd.duty_u16(0)
+        elif dir > 0:
+            self.fwd.duty_u16(pwm_val*256)
             self.bwd.duty_u16(0)
         elif dir < 0:
             self.fwd.duty_u16(0)
-            self.bwd.duty_u16(pwm_val)
+            self.bwd.duty_u16(pwm_val*256)
         else:
             self.fwd.duty_u16(0)
             self.bwd.duty_u16(0)
 
     def stop(self):
-        self.target = self.pos
+        self.pos = 0
+        self.target = 0
         self.prev_error = 0
         self.integral_error = 0
+        self.speed = 0
+        self.dir = 0
+
+        self.prev_time = time.ticks_us()
+        self.curr_time = time.ticks_us()
 
     def __str__(self) -> str:
         return self.name
@@ -136,12 +161,12 @@ while True:
             print("STOP")
         elif c == "?":
             for name, w in wheels.items():
-                print(name, ":", w.pos, "->", w.target, sep="")
+                print(name, ":", w.pos, "->", w.target, ";", w.speed * w.dir, sep="")
         elif c and c[:2] in wheels:
             wheel = wheels[c[:2]]
             try:
                 wheel.target = int(c[2:])
-                print(wheel.name, ":", wheel.pos, "->", wheel.target, sep="")
+                print(wheel.name, ":", wheel.pos, "->", wheel.target, ";", wheel.speed * wheel.dir, sep="")
             except ValueError:
                 print(c[2:], "?", sep="")
         else:
